@@ -220,31 +220,35 @@ static inline void setup_mode(u32 *dma_descriptor, SPACC_ALGO_MODE_E mode, unsig
 
 static inline void setup_key_size(u32 *dma_descriptor, SPACC_KEY_SIZE_E size, unsigned char *key)
 {
-	switch (size) {
-	case SPACC_KEY_SIZE_64BITS:
-		copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 8);
-		break;
-	case SPACC_KEY_SIZE_128BITS:
-		dma_descriptor[CRYPTODMA_CIPHER] |= (0x1 << 5);
-		copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 16);
-		break;
-	case SPACC_KEY_SIZE_192BITS:
-		dma_descriptor[CRYPTODMA_CIPHER] |= (0x1 << 4);
-		copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 24);
-		break;
-	case SPACC_KEY_SIZE_256BITS:
-		dma_descriptor[CRYPTODMA_CIPHER] |= (0x1 << 3);
-		copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 32);
-		break;
-	default:
-		break;
-	}
+        switch (size) {
+        case SPACC_KEY_SIZE_64BITS:
+                if (key)
+                        copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 8);
+                break;
+        case SPACC_KEY_SIZE_128BITS:
+                dma_descriptor[CRYPTODMA_CIPHER] |= (0x1 << 5);
+                if (key)
+                        copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 16);
+                break;
+        case SPACC_KEY_SIZE_192BITS:
+                dma_descriptor[CRYPTODMA_CIPHER] |= (0x1 << 4);
+                if (key)
+                        copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 24);
+                break;
+        case SPACC_KEY_SIZE_256BITS:
+                dma_descriptor[CRYPTODMA_CIPHER] |= (0x1 << 3);
+                if (key)
+                        copy_from_user(&dma_descriptor[CRYPTODMA_KEY], key, 32);
+                break;
+        default:
+                break;
+        }
 }
 
 static inline void setup_action(u32 *dma_descriptor, SPACC_ACTION_E action)
 {
-	if (action == SPACC_ACTION_ENCRYPTION)
-		dma_descriptor[CRYPTODMA_CIPHER] |= 0x1;
+        if (action == SPACC_ACTION_ENCRYPTION)
+                dma_descriptor[CRYPTODMA_CIPHER] |= 0x1;
 }
 
 static irqreturn_t cvitek_spacc_irq(int irq, void *data)
@@ -339,20 +343,29 @@ int spacc_base64(struct cvi_spacc *spacc, phys_addr_t src, uint32_t len, u32 ati
 
 int spacc_aes(struct cvi_spacc *spacc, phys_addr_t src, uint32_t len, spacc_aes_config_s config)
 {
-	__aligned(32) u32 dma_descriptor[22] = {0};
+        __aligned(32) u32 dma_descriptor[22] = {0};
+        u32 key_src_bit = DES_USE_DESCRIPTOR_KEY; // Родной рабочий бит (BIT(19)) для ключа из памяти
 
-	spacc->result_size = len;
-	dma_descriptor[CRYPTODMA_CTRL] = DES_USE_DESCRIPTOR_KEY | DES_USE_AES | 0xF;
+        if (config.otp == 1)
+                key_src_bit = DES_USE_KEY0 | BIT(27); // BIT(16) | BIT(27)
+        else if (config.otp == 2)
+                key_src_bit = DES_USE_KEY1 | BIT(27); // BIT(17) | BIT(27)
+        else if (config.otp == 3)
+                key_src_bit = DES_USE_KEY2 | BIT(27); // BIT(18) | BIT(27)
 
-	setup_mode(dma_descriptor, config.mode, config.iv);
-	setup_key_size(dma_descriptor, config.key_mode, config.key);
-	setup_action(dma_descriptor, config.action);
+        spacc->result_size = len;
+        dma_descriptor[CRYPTODMA_CTRL] = key_src_bit | DES_USE_AES | 0xF;
 
-	setup_src_dst(dma_descriptor, src, len);
-	setup_dma_descriptor(spacc, dma_descriptor);
+        setup_mode(dma_descriptor, config.mode, (unsigned char *)config.iv);
+        setup_key_size(dma_descriptor, config.key_mode,
+                       (config.otp == SPACC_KEY_SOURCE_DESCRIPTOR) ? (unsigned char *)config.key : NULL);
+        setup_action(dma_descriptor, config.action);
 
-	trigger_cryptodma_engine_and_wait_finish(spacc);
-	return 0;
+        setup_src_dst(dma_descriptor, src, len);
+        setup_dma_descriptor(spacc, dma_descriptor);
+
+        trigger_cryptodma_engine_and_wait_finish(spacc);
+        return 0;
 }
 
 int spacc_sm4(struct cvi_spacc *spacc, phys_addr_t src, uint32_t len, spacc_sm4_config_s config)
